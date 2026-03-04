@@ -42,8 +42,20 @@ You are the PRODUCT MANAGER in a multi-agent Claude Code swarm.
 ## Your role
 - You coordinate 3 Code Agents working in parallel in adjacent tmux panes.
 - You break down the user's high-level goal into concrete tasks.
-- You assign tasks by telling the human operator which agent should do what.
+- You assign tasks DIRECTLY to agents using tmux send-keys commands.
 - You review work, unblock agents, answer their technical questions, and keep the project on track.
+
+## How to communicate with agents
+Send tasks to agents by running bash commands. Always use a single one-line message followed by Enter:
+- Agent 1: tmux send-keys -t claude-swarm:0.1 "your one-line task here" Enter
+- Agent 2: tmux send-keys -t claude-swarm:0.2 "your one-line task here" Enter
+- Agent 3: tmux send-keys -t claude-swarm:0.3 "your one-line task here" Enter
+
+Rules for sending messages:
+- ALWAYS send a single one-line message. Never multi-line.
+- ALWAYS end with Enter to submit the message.
+- Keep task descriptions clear and self-contained in one line.
+- Agents will automatically report back to you when they finish or get blocked.
 
 ## Task management
 - You have access to Task Master AI via MCP tools. Use it to manage tasks.
@@ -65,25 +77,13 @@ You are the PRODUCT MANAGER in a multi-agent Claude Code swarm.
 ## Workflow
 1. Ask the human for the high-level goal only once at the start.
 2. Create tasks in Task Master based on the goal.
-3. Tell the operator which task to paste into which agent pane.
-4. Monitor progress — the operator will copy agent output to you if needed.
-5. Update task status as work completes. Iterate until done.
+3. Send tasks directly to agents using tmux send-keys commands.
+4. Wait for agents to report back. They will send status updates to your pane automatically.
+5. Update task status as work completes. Assign next tasks. Iterate until done.
 PROMPT
 
-read -r -d '' AGENT_SYSTEM <<'PROMPT' || true
-You are a CODE AGENT in a multi-agent Claude Code swarm.
-
-## Your role
-- You receive specific, scoped coding tasks from the Product Manager.
-- You execute them thoroughly: write code, run tests, fix bugs.
-- You report back with a SHORT summary of what you did and any blockers.
-
-## Rules
-- Stay focused on your assigned task. Do not wander into other agents' work.
-- If you are blocked or confused, clearly state what you need so the PM can unblock you.
-- Prefer small, testable commits.
-- If a task is unclear, ask ONE clarifying question, then proceed with your best judgment.
-PROMPT
+# Agent system prompts are generated per-agent in the file writing section below,
+# so each agent knows its number and how to report back to the PM.
 
 # ---------------------------------------------------------------------------
 # Preflight checks
@@ -109,7 +109,32 @@ SWARM_DIR="$PROJECT_DIR/.claude-swarm"
 mkdir -p "$SWARM_DIR"
 
 printf '%s' "$PM_SYSTEM" > "$SWARM_DIR/pm-prompt.txt"
-printf '%s' "$AGENT_SYSTEM" > "$SWARM_DIR/agent-prompt.txt"
+
+# Generate per-agent prompt files (each agent knows its number and how to report back)
+for AGENT_NUM in 1 2 3; do
+    cat > "$SWARM_DIR/agent${AGENT_NUM}-prompt.txt" << AGENTEOF
+You are CODE AGENT ${AGENT_NUM} in a multi-agent Claude Code swarm.
+
+## Your role
+- You receive specific, scoped coding tasks from the Product Manager.
+- You execute them thoroughly: write code, run tests, fix bugs.
+- When done, you report back to the PM automatically via tmux.
+
+## Reporting back to the PM
+When you complete your task, report to the Product Manager by running:
+tmux send-keys -t claude-swarm:0.0 "AGENT ${AGENT_NUM} DONE: <one-line summary of what you did>" Enter
+
+If you are blocked and need help, report it:
+tmux send-keys -t claude-swarm:0.0 "AGENT ${AGENT_NUM} BLOCKED: <what you need>" Enter
+
+IMPORTANT: Always use a single one-line message followed by Enter. Never multi-line.
+
+## Rules
+- Stay focused on your assigned task. Do not wander into other agents' work.
+- Prefer small, testable commits.
+- If a task is unclear, ask ONE clarifying question to the PM via tmux send-keys, then proceed with your best judgment.
+AGENTEOF
+done
 
 # Generate MCP config for task-master-ai (used by PM only)
 cat > "$SWARM_DIR/mcp.json" << EOF
@@ -168,19 +193,19 @@ tmux select-pane -t "$SESSION_NAME:0.0" -P 'bg=colour234'
 
 # Product Manager (interactive — with Task Master AI via MCP)
 tmux send-keys -t "$SESSION_NAME:0.0" \
-    "claude --permission-mode acceptEdits --mcp-config '$SWARM_DIR/mcp.json' --system-prompt \"\$(cat '$SWARM_DIR/pm-prompt.txt')\"" Enter
+    "claude --permission-mode bypassPermissions --mcp-config '$SWARM_DIR/mcp.json' --system-prompt \"\$(cat '$SWARM_DIR/pm-prompt.txt')\"" Enter
 
 # Agent 1
 tmux send-keys -t "$SESSION_NAME:0.1" \
-    "claude --permission-mode acceptEdits --system-prompt \"\$(cat '$SWARM_DIR/agent-prompt.txt')\"" Enter
+    "claude --permission-mode bypassPermissions --system-prompt \"\$(cat '$SWARM_DIR/agent1-prompt.txt')\"" Enter
 
 # Agent 2
 tmux send-keys -t "$SESSION_NAME:0.2" \
-    "claude --permission-mode acceptEdits --system-prompt \"\$(cat '$SWARM_DIR/agent-prompt.txt')\"" Enter
+    "claude --permission-mode bypassPermissions --system-prompt \"\$(cat '$SWARM_DIR/agent2-prompt.txt')\"" Enter
 
 # Agent 3
 tmux send-keys -t "$SESSION_NAME:0.3" \
-    "claude --permission-mode acceptEdits --system-prompt \"\$(cat '$SWARM_DIR/agent-prompt.txt')\"" Enter
+    "claude --permission-mode bypassPermissions --system-prompt \"\$(cat '$SWARM_DIR/agent3-prompt.txt')\"" Enter
 
 # Focus on the PM pane
 tmux select-pane -t "$SESSION_NAME:0.0"
